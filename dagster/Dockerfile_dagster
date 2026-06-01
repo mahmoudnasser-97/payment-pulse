@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir \
+    dagster==1.7.7 \
+    dagster-postgres==0.23.7 \
+    dagster-webserver==1.7.7
+
+WORKDIR /opt/dagster/app
+
+COPY workspace.yaml .
