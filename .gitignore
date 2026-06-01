@@ -1,0 +1,10 @@
+cat > .gitignore << 'EOF'
+data/
+*.pyc
+__pycache__/
+.env
+*.jar
+*.egg-info/
+.DS_Store
+Thumbs.db
+EOF
