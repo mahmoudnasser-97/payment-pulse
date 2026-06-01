@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  jupyter:
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./data:/home/jovyan/data
+      - ./spark_jobs:/home/jovyan/spark_jobs
+    ports:
+      - "8888:8888"
+
+  streamlit:
+    volumes:
+      - ./streamlit:/app
+    ports:
+      - "8501:8501"
+
+  dagster-user-code:
+    volumes:
+      - ./dagster/pipelines:/opt/dagster/app
+      - ./spark_jobs:/opt/spark_jobs
+      - ./data:/opt/data
+
+  spark-master:
+    volumes:
+      - ./spark_jobs:/opt/spark_jobs
+      - ./data:/opt/data
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+
+  spark-worker:
+    volumes:
+      - ./spark_jobs:/opt/spark_jobs
+      - ./data:/opt/data
+
+  postgres-meta:
+    ports:
+      - "5433:5432"
+
+  postgres-dw:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  minio:
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  zookeeper:
+    ports:
+      - "2181:2181"
+
+  kafka:
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+
+  kafka-connect:
+    ports:
+      - "8083:8083"
+
+  kafka-ui:
+    ports:
+      - "8085:8080"
+
+  dagster-webserver:
+    ports:
+      - "3000:3000"
