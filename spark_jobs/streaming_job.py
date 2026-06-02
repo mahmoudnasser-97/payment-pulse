@@ -163,4 +163,39 @@ postgres_query = (
 
 # Keeping the job running until manually stopped
 print("Streaming job started. Waiting for data from Kafka")
+
+# Sink 3: Update Redis counters for the live dashboard
+import redis as redis_client
+
+def write_to_redis(batch_df, batch_id):
+    if batch_df.count() == 0:
+        return
+
+    r = redis_client.Redis(host="redis", port=6379, decode_responses=True)
+    rows = batch_df.collect()
+
+    for row in rows:
+        r.incr("pulse:total_transactions")
+        if row["is_fraud"]:
+            r.incr("pulse:total_fraud")
+        r.incrbyfloat("pulse:total_revenue", float(row["amount_egp"] or 0))
+
+        # Per-service and per-governorate counters
+        if row["service_type"]:
+            r.hincrby("pulse:by_service", row["service_type"], 1)
+        if row["governorate"]:
+            r.hincrby("pulse:by_governorate", row["governorate"], 1)
+
+        # TPS window: a list of per-batch counts capped at 60 entries
+    r.lpush("pulse:tps_window", len(rows))
+    r.ltrim("pulse:tps_window", 0, 59)
+
+redis_query = (
+    enriched.writeStream
+    .foreachBatch(write_to_redis)
+    .option("checkpointLocation", "/tmp/checkpoint/redis")
+    .trigger(processingTime="10 seconds")
+    .start()
+)
+
 spark.streams.awaitAnyTermination()
