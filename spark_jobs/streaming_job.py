@@ -39,35 +39,61 @@ TRANSACTION_SCHEMA = StructType([
     StructField("is_fraud",        BooleanType(), True),
 ])
 
-# Rule-based fraud scorer (placeholder until ML model is trained)
-# Returns a fraud probability score between 0.0 and 1.0
-def score_fraud(amount: float, service_type: str,
-                payment_method: str, status: str) -> float:
-    score = 0.0
+# ML fraud scorer: loads the trained Random Forest model from disk
+# Falls back to rule-based scoring if model file is not found yet
+import joblib
+import numpy as np
 
+MODEL_PATH   = "/opt/spark_jobs/fraud_model.pkl"
+LE_SVC_PATH  = "/opt/spark_jobs/le_service.pkl"
+LE_GOV_PATH  = "/opt/spark_jobs/le_gov.pkl"
+LE_PAY_PATH  = "/opt/spark_jobs/le_payment.pkl"
+
+def load_model():
+    try:
+        model      = joblib.load(MODEL_PATH)
+        le_service = joblib.load(LE_SVC_PATH)
+        le_gov     = joblib.load(LE_GOV_PATH)
+        le_payment = joblib.load(LE_PAY_PATH)
+        return model, le_service, le_gov, le_payment
+    except Exception:
+        return None, None, None, None
+
+_model, _le_svc, _le_gov, _le_pay = load_model()
+
+def score_fraud(amount, service_type, payment_method, status):
+    # ML path
+    if _model is not None:
+        try:
+            svc_enc = _le_svc.transform([service_type])[0]
+            gov_enc = 0
+            pay_enc = _le_pay.transform([payment_method])[0]
+            hour    = datetime.utcnow().hour
+            odd     = 1 if hour <= 4 else 0
+            amount_pct = min(float(amount) / 50000.0, 1.0)
+            features = np.array([[amount, svc_enc, gov_enc,
+                                   pay_enc, hour, amount_pct, odd]])
+            score = float(_model.predict_proba(features)[0][1])
+            return round(score, 4)
+        except Exception:
+            pass
+
+    # Rule-based fallback
+    score = 0.0
     if amount is None:
         return score
-
-    # High amount is the strongest fraud signal
     if amount > 15000:
         score += 0.6
     elif amount > 8000:
         score += 0.3
     elif amount > 3000:
         score += 0.1
-
-    # Credit card payments at high amounts are riskier
     if payment_method == "credit_card" and amount > 5000:
         score += 0.15
-
-    # Failed transactions that were large are suspicious
     if status == "failed" and amount > 2000:
         score += 0.1
-
-    # University fees and credit card payments have higher legitimate highs
     if service_type in ("university_fees", "credit_card_payment"):
         score = max(0.0, score - 0.1)
-
     return round(min(score, 1.0), 4)
 
 score_fraud_udf = udf(score_fraud, DoubleType())
