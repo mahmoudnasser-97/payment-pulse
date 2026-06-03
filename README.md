@@ -1,167 +1,186 @@
 # PaymentPulse
 
-A real-time payment transaction analytics and fraud detection platform simulating an Egyptian fintech payment network — processing high-volume events across 15 service types and 15 governorates, with inline ML fraud scoring before data ever reaches storage.
-
----
-
-## What this does
-
-Most fraud detection systems score transactions *after* they're stored. PaymentPulse puts the model *inside the stream* — every transaction is validated, enriched, and scored by a Random Forest classifier served as a PySpark UDF before it hits the Bronze layer. Suspicious events are flagged in real time and surfaced on a live Streamlit dashboard showing TPS, fraud rate, and geographic revenue breakdown by governorate.
-
-The platform is structured around the Medallion Architecture on MinIO (Bronze → Silver → Gold), with a PostgreSQL warehouse downstream and Dagster handling daily merchant reconciliation and governorate-level aggregation.
+A real-time payment transaction analytics and fraud detection platform built with Apache Kafka, Apache Spark, MinIO, PostgreSQL, Dagster, Redis, and Streamlit. The platform simulates a high-volume Egyptian payment network processing thousands of daily transactions across 15 service types and 15 governorates, with inline fraud detection powered by a Random Forest model served as a PySpark UDF.
 
 ---
 
 ## Architecture
 
-### Mermaid diagram
-
-```mermaid
-flowchart LR
-    A([Transaction Generator]) -->|synthetic events| B[Apache Kafka]
-    B --> C[Spark Structured Streaming]
-    C --> D{Fraud Scoring\nRandom Forest UDF}
-    D -->|clean| E[MinIO Bronze]
-    D -->|flagged| F[Fraud Alerts]
-    E --> G[MinIO Silver\ncleaned + enriched]
-    G --> H[MinIO Gold\naggregated]
-    H --> I[(PostgreSQL\nWarehouse)]
-    I --> J[Dagster Pipelines\ndaily reconciliation]
-    C --> K[Redis\nfeature store]
-    K --> D
-    I --> L[Streamlit Dashboard\nlive TPS · fraud rate · geo map]
 ```
+[Python Simulator]
+      │
+      ▼ (Kafka Producer)
+[Apache Kafka] ── topic: raw_transactions
+      │
+      ▼ (Spark Structured Streaming)
+[Apache Spark]
+  ├── Data cleaning & validation
+  ├── Feature enrichment
+  └── ML fraud scoring (Random Forest UDF)
+      │
+      ├──▶ [MinIO Data Lake]
+      │       ├── Bronze  (raw Parquet)
+      │       ├── Silver  (cleaned)
+      │       └── Gold    (aggregated)
+      │
+      ├──▶ [PostgreSQL Data Warehouse]
+      │       ├── transactions
+      │       ├── merchant_daily_summary
+      │       └── governorate_daily_summary
+      │
+      └──▶ [Redis]
+              └── Real-time counters for dashboard
 
-### ASCII diagram
+[Dagster] ── schedules daily batch jobs
+  ├── Merchant reconciliation DAG
+  └── Governorate summary DAG
 
-```
- ┌─────────────────────┐
- │ Transaction          │
- │ Generator            │  synthetic events
- └──────────┬──────────┘
-            │
-            ▼
- ┌─────────────────────┐
- │   Apache Kafka       │  event streaming
- └──────────┬──────────┘
-            │
-            ▼
- ┌─────────────────────┐     ┌──────────────────┐
- │  Spark Structured    │────▶│  Redis           │
- │  Streaming           │◀────│  feature store   │
- └──────────┬──────────┘     └──────────────────┘
-            │
-            ▼
- ┌─────────────────────┐
- │  Random Forest UDF   │  fraud scoring inline
- └──────┬──────┬───────┘
-        │      │
-   clean│      │flagged
-        ▼      ▼
- ┌──────────┐ ┌──────────────┐
- │  MinIO   │ │ Fraud Alerts │
- │  Bronze  │ └──────────────┘
- └────┬─────┘
-      │
-      ▼
- ┌──────────┐
- │  MinIO   │  cleaned + enriched
- │  Silver  │
- └────┬─────┘
-      │
-      ▼
- ┌──────────┐
- │  MinIO   │  aggregated KPIs
- │  Gold    │
- └────┬─────┘
-      │
-      ▼
- ┌──────────────────┐
- │  PostgreSQL      │  data warehouse
- │  Warehouse       │
- └────┬─────────────┘
-      │
-      ├──────────────────────────────┐
-      ▼                              ▼
- ┌──────────────────┐     ┌──────────────────────┐
- │  Dagster          │     │  Streamlit Dashboard │
- │  daily pipelines  │     │  TPS · fraud · geo   │
- └──────────────────┘     └──────────────────────┘
+[Streamlit Dashboard] ── reads from Redis + PostgreSQL
+  ├── Live TPS and fraud rate
+  ├── Revenue by service type
+  └── Transactions by governorate
 ```
 
 ---
 
 ## Stack
 
-| Layer | Technology | Role |
+| Layer | Technology |
+|---|---|
+| Ingestion | Apache Kafka 7.6, Kafka Connect |
+| Stream processing | Apache Spark 3.5.1 Structured Streaming |
+| ML fraud scoring | scikit-learn Random Forest, served as PySpark UDF |
+| Data lake | MinIO (S3-compatible), Medallion Architecture |
+| Data warehouse | PostgreSQL 15 |
+| Real-time store | Redis 7.2 |
+| Orchestration | Dagster 1.7.7 |
+| Dashboard | Streamlit 1.35.0, Plotly |
+| Infrastructure | Docker Compose, 15 containerized services |
+
+---
+
+## Services and Ports
+
+| Service | URL | Credentials |
 |---|---|---|
-| Ingestion | Apache Kafka | Real-time event streaming |
-| Processing | Apache Spark (Structured Streaming) | Stream processing + ML scoring |
-| ML | scikit-learn Random Forest → PySpark UDF | Inline fraud detection |
-| Feature store | Redis | Low-latency feature lookups |
-| Data lake | MinIO (S3-compatible) | Bronze / Silver / Gold layers |
-| Warehouse | PostgreSQL | Analytical aggregates |
-| Orchestration | Dagster | Scheduled reconciliation pipelines |
-| Dashboard | Streamlit | Live KPI visualization |
-| Infrastructure | Docker (12 services) | Full platform containerization |
+| Kafka UI | http://localhost:8085 | — |
+| Spark UI | http://localhost:8080 | — |
+| MinIO Console | http://localhost:9001 | minioadmin / minioadmin |
+| Dagster UI | http://localhost:3000 | — |
+| Streamlit Dashboard | http://localhost:8501 | — |
+| Jupyter | http://localhost:8888 | token: pulse |
+| PostgreSQL DW | localhost:5432 | pulse / pulse |
 
 ---
 
-## Key design decisions
-
-**Why fraud scoring inside the stream?**
-Scoring after storage means fraudulent transactions are already persisted and require retroactive correction. By serving the Random Forest model as a PySpark UDF inside the Spark Structured Streaming job, suspicious events are flagged before they touch the Bronze layer — cleaner audit trail, no retroactive patching.
-
-**Why Redis as a feature store?**
-Transaction fraud signals (e.g. velocity per merchant, per governorate) require state that can't be derived from a single event. Redis holds pre-aggregated rolling windows that the UDF can look up at stream speed without hitting the data lake.
-
-**Why Dagster over Airflow for batch?**
-Dagster's asset-based model maps naturally to Medallion layers — each layer is an explicit asset with defined dependencies, making lineage and impact analysis first-class rather than inferred from task graphs.
-
----
-
-## Project structure
+## Project Structure
 
 ```
-paymentpulse/
-├── producer/           # Kafka transaction generator
-├── spark_streaming/    # Spark job + Random Forest UDF
-├── dagster_pipelines/  # Daily reconciliation + aggregation
-├── dashboard/          # Streamlit app
-├── models/             # Trained fraud model (pickle)
-├── docker/             # Docker Compose + service configs
-└── notebooks/          # EDA and model training
+payment-pulse/
+├── simulator/          # Python transaction generator
+├── kafka-connect/      # Kafka Connect Dockerfile + S3 connector
+├── spark/              # Spark Dockerfile + baked-in JARs
+├── spark_jobs/         # Spark streaming job + ML scorer
+├── dagster/            # Dagster Dockerfiles + pipeline code
+├── jupyter/            # Jupyter Dockerfile
+├── streamlit/          # Streamlit dashboard
+├── notebooks/          # ML model training notebook
+├── sql/                # PostgreSQL schema (init.sql)
+├── data/               # Local data volume (gitignored)
+└── docker-compose.yml  # Full platform orchestration
 ```
 
 ---
 
-## Running locally
+## Running the Platform
 
-**Prerequisites:** Docker, Docker Compose
+**Prerequisites:** Docker Desktop, Git, Python 3.x
+
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/mahmoudnasser-97/paymentpulse
-cd paymentpulse
-docker compose up --build
+git clone https://github.com/YOUR_GITHUB_USERNAME/payment-pulse.git
+cd payment-pulse
 ```
 
-Services start in order with health checks. The Streamlit dashboard is available at `http://localhost:8501` once all services are healthy (~2–3 min cold start).
+### 2. Download required JARs into spark/jars/
 
-| Service | URL |
-|---|---|
-| Streamlit dashboard | http://localhost:8501 |
-| Airflow (if applicable) | http://localhost:8080 |
-| MinIO console | http://localhost:9001 |
+```bash
+cd spark/jars
+
+curl -L -o hadoop-aws-3.3.4.jar \
+  https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
+
+curl -L -o aws-java-sdk-bundle-1.12.262.jar \
+  https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
+
+curl -L -o spark-sql-kafka-0-10_2.12-3.5.1.jar \
+  https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.1/spark-sql-kafka-0-10_2.12-3.5.1.jar
+
+curl -L -o kafka-clients-3.4.0.jar \
+  https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.4.0/kafka-clients-3.4.0.jar
+
+curl -L -o spark-token-provider-kafka-0-10_2.12-3.5.1.jar \
+  https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.5.1/spark-token-provider-kafka-0-10_2.12-3.5.1.jar
+
+curl -L -o commons-pool2-2.11.1.jar \
+  https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar
+
+curl -L -o postgresql-42.7.3.jar \
+  https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/postgresql-42.7.3.jar
+```
+
+### 3. Start the platform
+
+```bash
+cd ../..
+docker compose up --build -d
+```
+
+### 4. Run the transaction simulator
+
+```bash
+cd simulator
+pip install kafka-python-ng==2.2.3
+python simulator.py
+```
+
+### 5. Train the fraud model (optional)
+
+The rule-based fallback scorer is active by default. To replace it with the trained Random Forest model:
+
+- Open http://localhost:8888 and enter token: `pulse`
+- Create a new notebook
+- Run the cells from `notebooks/train_fraud_model.ipynb` in order
+- The saved model files are automatically shared with the Spark container via Docker volume
 
 ---
 
-## Domain context
+## Domain Context
 
-The platform is modelled on Egyptian payment network patterns — 15 governorates, 15 service categories (mobile top-up, utilities, e-commerce, etc.) — to reflect realistic fraud monitoring challenges at the scale of providers like Fawry or Paymob. Transaction volumes and fraud rates are calibrated to mirror production-like distributions rather than uniform random data.
+The platform models a payment network operating in Egypt with the following transaction types:
+
+- Utility bills (electricity, water, gas, telephone)
+- Mobile top-ups and internet bills
+- Education fees (school and university)
+- Government services and traffic fines
+- Insurance premiums and credit card payments
+- POS and e-commerce purchases
+- Donations
+
+Transactions are distributed across 15 Egyptian governorates including Cairo, Giza, Alexandria, Qalyubia, Sharqia, Dakahlia, Beheira, Minya, Assiut, Sohag, Luxor, Aswan, Port Said, Suez, and Ismailia.
+
+Fraud is injected at a 3% rate with patterns including unusually high amounts (EGP 15,000–50,000) and suspicious transaction hours (1am–4am).
 
 ---
 
-## Author
+## Key Engineering Concepts Demonstrated
 
-Mahmoud Nasser Elmoghany
-[LinkedIn](https://linkedin.com/in/mahmoud-elmoghany) · [GitHub](https://github.com/mahmoudnasser-97)
+- **Medallion Architecture** — Bronze / Silver / Gold data lake layers on MinIO
+- **Kafka producer-consumer decoupling** — simulator and Spark are fully independent
+- **Spark Structured Streaming** — micro-batch processing with foreachBatch sinks
+- **ML model serving inside a stream** — Random Forest UDF applied to every record in motion
+- **Pre-aggregation pattern** — Redis counters updated by Spark for instant dashboard reads
+- **Dual-sink streaming** — same stream written to both MinIO (Parquet) and PostgreSQL (JDBC) simultaneously
+- **Dagster orchestration** — scheduled batch reconciliation jobs with full run history and UI
+- **Containerized data platform** — 15 services with health checks, dependency ordering, and automatic restarts
