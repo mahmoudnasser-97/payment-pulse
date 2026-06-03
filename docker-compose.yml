@@ -309,6 +309,7 @@ services:
       DAGSTER_CURRENT_IMAGE: pulse-user-code
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
+      DAGSTER_HOME: /opt/dagster/dagster_home
     volumes:
       - ./dagster/pipelines:/opt/dagster/app
       - ./spark_jobs:/opt/spark_jobs
@@ -341,6 +342,7 @@ services:
       DAGSTER_POSTGRES_PASSWORD: dagster
       DAGSTER_POSTGRES_HOST: postgres-meta
       DAGSTER_POSTGRES_DB: dagster
+      DAGSTER_HOME: /opt/dagster/dagster_home
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -363,6 +365,7 @@ services:
       DAGSTER_POSTGRES_PASSWORD: dagster
       DAGSTER_POSTGRES_HOST: postgres-meta
       DAGSTER_POSTGRES_DB: dagster
+      DAGSTER_HOME: /opt/dagster/dagster_home
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
