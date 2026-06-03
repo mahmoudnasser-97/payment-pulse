@@ -14,4 +14,7 @@ RUN pip install --no-cache-dir --timeout=120 \
     boto3==1.34.69 \
     pyarrow==11.0.0
 
+
+COPY jars/ /opt/spark/jars/
+
 WORKDIR /opt/spark_jobs
